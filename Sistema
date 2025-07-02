@@ -1,0 +1,547 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <time.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
+typedef enum {
+    NOVO,
+    PRONTO,
+    EXECUTANDO,
+    BLOQUEADO,
+    FINALIZADO
+} EstadoProcesso;
+
+typedef struct {
+    int id;
+    EstadoProcesso estado;
+    char programa[50];
+    int tempo_execucao_restante;
+    int prioridade;
+    int tamanho_memoria;
+    int endereco_base_memoria;
+} Processo;
+
+#define MAX_PROCESSOS 100
+Processo *fila_prontos[MAX_PROCESSOS];
+int num_processos_prontos = 0;
+
+Processo* criar_processo(int id, const char* programa, int tempo_execucao, int prioridade, int tamanho_memoria) {
+    Processo* novo_processo = (Processo*)malloc(sizeof(Processo));
+    if (novo_processo == NULL) {
+        perror("Erro ao alocar memória para o processo");
+        exit(EXIT_FAILURE);
+    }
+    novo_processo->id = id;
+    novo_processo->estado = NOVO;
+    strncpy(novo_processo->programa, programa, sizeof(novo_processo->programa) - 1);
+    novo_processo->programa[sizeof(novo_processo->programa) - 1] = '\0';
+    novo_processo->tempo_execucao_restante = tempo_execucao;
+    novo_processo->prioridade = prioridade;
+    novo_processo->tamanho_memoria = tamanho_memoria;
+    novo_processo->endereco_base_memoria = -1;
+
+    printf("Processo %d ('%s') criado (Estado: NOVO)\n", novo_processo->id, novo_processo->programa);
+#ifdef _WIN32
+    Sleep(500);
+#else
+    usleep(500000);
+#endif
+    return novo_processo;
+}
+
+void alterar_estado(Processo* processo, EstadoProcesso novo_estado) {
+    if (processo == NULL) return;
+    printf("Processo %d: Estado de %d para %d\n", processo->id, processo->estado, novo_estado);
+}
+
+void adicionar_a_fila_prontos(Processo* processo) {
+    if (num_processos_prontos < MAX_PROCESSOS) {
+        fila_prontos[num_processos_prontos++] = processo;
+        alterar_estado(processo, PRONTO);
+    } else {
+        printf("Fila de prontos cheia! Não foi possível adicionar o processo %d.\n", processo->id);
+    }
+}
+
+void finalizar_processo(Processo* processo) {
+    if (processo == NULL) return;
+    alterar_estado(processo, FINALIZADO);
+    printf("Processo %d ('%s') finalizado.\n", processo->id, processo->programa);
+#ifdef _WIN32
+    Sleep(500);
+#else
+    usleep(500000);
+#endif
+}
+
+Processo* escalonar_fifo() {
+    if (num_processos_prontos == 0) {
+        return NULL;
+    }
+    Processo* processo_escolhido = fila_prontos[0];
+
+    for (int i = 0; i < num_processos_prontos - 1; i++) {
+        fila_prontos[i] = fila_prontos[i + 1];
+    }
+    num_processos_prontos--;
+
+    return processo_escolhido;
+}
+
+void simular_execucao(Processo* processo) {
+    if (processo == NULL) return;
+
+    alterar_estado(processo, EXECUTANDO);
+    printf("Executando Processo %d ('%s'). Tempo restante: %d\n", processo->id, processo->programa, processo->tempo_execucao_restante);
+#ifdef _WIN32
+    Sleep(1000);
+#else
+    sleep(1);
+#endif
+
+    int quantum = 1;
+    if (processo->tempo_execucao_restante <= quantum) {
+        processo->tempo_execucao_restante = 0;
+        finalizar_processo(processo);
+    } else {
+        processo->tempo_execucao_restante -= quantum;
+        printf("Processo %d pausado. Tempo restante: %d\n", processo->id, processo->tempo_execucao_restante);
+        alterar_estado(processo, PRONTO);
+        adicionar_a_fila_prontos(processo);
+    }
+}
+
+#define TAMANHO_MEMORIA_TOTAL 1024
+char memoria[TAMANHO_MEMORIA_TOTAL];
+bool memoria_ocupada[TAMANHO_MEMORIA_TOTAL];
+
+void inicializar_memoria() {
+    memset(memoria_ocupada, false, sizeof(memoria_ocupada));
+    printf("Memória inicializada. Tamanho total: %d bytes.\n", TAMANHO_MEMORIA_TOTAL);
+#ifdef _WIN32
+    Sleep(500);
+#else
+    usleep(500000);
+#endif
+}
+
+int alocar_memoria_FirstFit(Processo* processo) {
+    if (processo == NULL || processo->tamanho_memoria <= 0) {
+        printf("Erro: Processo inválido ou tamanho de memória inválido.\n");
+        return -1;
+    }
+
+    int inicio_bloco = -1;
+    int contador_espaco_livre = 0;
+
+    for (int i = 0; i < TAMANHO_MEMORIA_TOTAL; i++) {
+        if (!memoria_ocupada[i]) {
+            contador_espaco_livre++;
+            if (contador_espaco_livre == processo->tamanho_memoria) {
+                inicio_bloco = i - processo->tamanho_memoria + 1;
+                break;
+            }
+        } else {
+            contador_espaco_livre = 0;
+        }
+    }
+
+    if (inicio_bloco != -1) {
+        for (int i = 0; i < processo->tamanho_memoria; i++) {
+            memoria_ocupada[inicio_bloco + i] = true;
+        }
+        processo->endereco_base_memoria = inicio_bloco;
+        printf("Memória alocada para Processo %d: %d bytes a partir do endereço %d\n",
+               processo->id, processo->tamanho_memoria, inicio_bloco);
+#ifdef _WIN32
+        Sleep(500);
+#else
+        usleep(500000);
+#endif
+        return inicio_bloco;
+    } else {
+        printf("Não há espaço contíguo suficiente para o Processo %d (requer %d bytes).\n",
+               processo->id, processo->tamanho_memoria);
+#ifdef _WIN32
+        Sleep(500);
+#else
+        usleep(500000);
+#endif
+        return -1;
+    }
+}
+
+void liberar_memoria(Processo* processo) {
+    if (processo == NULL || processo->endereco_base_memoria == -1) {
+        printf("Erro: Processo inválido ou memória não alocada.\n");
+        return;
+    }
+
+    for (int i = 0; i < processo->tamanho_memoria; i++) {
+        memoria_ocupada[processo->endereco_base_memoria + i] = false;
+    }
+    printf("Memória liberada para Processo %d: %d bytes a partir do endereço %d\n",
+           processo->id, processo->tamanho_memoria, processo->endereco_base_memoria);
+    processo->endereco_base_memoria = -1;
+#ifdef _WIN32
+    Sleep(500);
+#else
+    usleep(500000);
+#endif
+}
+
+typedef enum {
+    TECLADO,
+    IMPRESSORA
+} TipoDispositivo;
+
+typedef struct {
+    Processo* processo;
+    TipoDispositivo dispositivo;
+} RequisicaoES;
+
+#define MAX_REQUISICOES_ES 50
+RequisicaoES fila_requisicoes_teclado[MAX_REQUISICOES_ES];
+int num_req_teclado = 0;
+RequisicaoES fila_requisicoes_impressora[MAX_REQUISICOES_ES];
+int num_req_impressora = 0;
+
+void solicitar_es(Processo* processo, TipoDispositivo dispositivo) {
+    if (processo == NULL) return;
+
+    alterar_estado(processo, BLOQUEADO);
+    RequisicaoES nova_req = {processo, dispositivo};
+
+    if (dispositivo == TECLADO) {
+        if (num_req_teclado < MAX_REQUISICOES_ES) {
+            fila_requisicoes_teclado[num_req_teclado++] = nova_req;
+            printf("Processo %d bloqueado aguardando TECLADO.\n", processo->id);
+        } else {
+            printf("Fila de requisições do teclado cheia! Processo %d não pôde solicitar E/S.\n", processo->id);
+        }
+    } else if (dispositivo == IMPRESSORA) {
+        if (num_req_impressora < MAX_REQUISICOES_ES) {
+            fila_requisicoes_impressora[num_req_impressora++] = nova_req;
+            printf("Processo %d bloqueado aguardando IMPRESSORA.\n", processo->id);
+        } else {
+            printf("Fila de requisições da impressora cheia! Processo %d não pôde solicitar E/S.\n", processo->id);
+        }
+    }
+#ifdef _WIN32
+    Sleep(500);
+#else
+    usleep(500000);
+#endif
+}
+
+void simular_interrupcao_es(TipoDispositivo dispositivo) {
+    Processo* processo_desbloqueado = NULL;
+
+    if (dispositivo == TECLADO && num_req_teclado > 0) {
+        processo_desbloqueado = fila_requisicoes_teclado[0].processo;
+        for (int i = 0; i < num_req_teclado - 1; i++) {
+            fila_requisicoes_teclado[i] = fila_requisicoes_teclado[i+1];
+        }
+        num_req_teclado--;
+        printf("Interrupção do TECLADO! Processo %d desbloqueado.\n", processo_desbloqueado->id);
+    } else if (dispositivo == IMPRESSORA && num_req_impressora > 0) {
+        processo_desbloqueado = fila_requisicoes_impressora[0].processo;
+        for (int i = 0; i < num_req_impressora - 1; i++) {
+            fila_requisicoes_impressora[i] = fila_requisicoes_impressora[i+1];
+        }
+        num_req_impressora--;
+        printf("Interrupção da IMPRESSORA! Processo %d desbloqueado.\n", processo_desbloqueado->id);
+    } else {
+        printf("Nenhum processo bloqueado para o dispositivo %d.\n", dispositivo);
+    }
+
+    if (processo_desbloqueado != NULL) {
+        adicionar_a_fila_prontos(processo_desbloqueado);
+    }
+#ifdef _WIN32
+    Sleep(500);
+#else
+    usleep(500000);
+#endif
+}
+
+#define MAX_ARQUIVOS 20
+#define MAX_CONTEUDO_ARQUIVO 100
+
+typedef struct {
+    char nome[30];
+    char conteudo[MAX_CONTEUDO_ARQUIVO];
+    int tamanho;
+    bool permissao_leitura;
+    bool permissao_escrita;
+} Arquivo;
+
+typedef struct {
+    char nome[30];
+    Arquivo arquivos[MAX_ARQUIVOS];
+    int num_arquivos;
+} Diretorio;
+
+Diretorio raiz;
+
+void inicializar_sistema_arquivos() {
+    strncpy(raiz.nome, "/", sizeof(raiz.nome) - 1);
+    raiz.nome[sizeof(raiz.nome) - 1] = '\0';
+    raiz.num_arquivos = 0;
+    printf("Sistema de arquivos inicializado. Diretório raiz criada.\n");
+#ifdef _WIN32
+    Sleep(500);
+#else
+    usleep(500000);
+#endif
+}
+
+void criar_arquivo(const char* nome, bool leitura, bool escrita) {
+    if (raiz.num_arquivos < MAX_ARQUIVOS) {
+        strncpy(raiz.arquivos[raiz.num_arquivos].nome, nome, sizeof(raiz.arquivos[raiz.num_arquivos].nome) - 1);
+        raiz.arquivos[raiz.num_arquivos].nome[sizeof(raiz.arquivos[raiz.num_arquivos].nome) - 1] = '\0';
+        raiz.arquivos[raiz.num_arquivos].tamanho = 0;
+        raiz.arquivos[raiz.num_arquivos].permissao_leitura = leitura;
+        raiz.arquivos[raiz.num_arquivos].permissao_escrita = escrita;
+        printf("Arquivo '%s' criado (Leitura: %d, Escrita: %d).\n", nome, leitura, escrita);
+        raiz.num_arquivos++;
+    } else {
+        printf("Limite de arquivos atingido na raiz.\n");
+    }
+#ifdef _WIN32
+    Sleep(500);
+#else
+    usleep(500000);
+#endif
+}
+
+void ler_arquivo(const char* nome) {
+    for (int i = 0; i < raiz.num_arquivos; i++) {
+        if (strcmp(raiz.arquivos[i].nome, nome) == 0) {
+            if (raiz.arquivos[i].permissao_leitura) {
+                printf("Conteúdo do arquivo '%s': %s\n", nome, raiz.arquivos[i].conteudo);
+            } else {
+                printf("Permissão negada para ler o arquivo '%s'.\n", nome);
+            }
+#ifdef _WIN32
+            Sleep(500);
+#else
+            usleep(500000);
+#endif
+            return;
+        }
+    }
+    printf("Arquivo '%s' não encontrado.\n", nome);
+#ifdef _WIN32
+    Sleep(500);
+#else
+    usleep(500000);
+#endif
+}
+
+void escrever_arquivo(const char* nome, const char* novo_conteudo) {
+    for (int i = 0; i < raiz.num_arquivos; i++) {
+        if (strcmp(raiz.arquivos[i].nome, nome) == 0) {
+            if (raiz.arquivos[i].permissao_escrita) {
+                strncpy(raiz.arquivos[i].conteudo, novo_conteudo, sizeof(raiz.arquivos[i].conteudo) - 1);
+                raiz.arquivos[i].conteudo[sizeof(raiz.arquivos[i].conteudo) - 1] = '\0';
+                raiz.arquivos[i].tamanho = strlen(raiz.arquivos[i].conteudo);
+                printf("Escrito em arquivo '%s'. Novo conteúdo: '%s'\n", nome, novo_conteudo);
+            } else {
+                printf("Permissão negada para escrever no arquivo '%s'.\n", nome);
+            }
+#ifdef _WIN32
+            Sleep(500);
+#else
+            usleep(500000);
+#endif
+            return;
+        }
+    }
+    printf("Arquivo '%s' não encontrado.\n", nome);
+#ifdef _WIN32
+    Sleep(500);
+#else
+    usleep(500000);
+#endif
+}
+
+void deletar_arquivo(const char* nome) {
+    for (int i = 0; i < raiz.num_arquivos; i++) {
+        if (strcmp(raiz.arquivos[i].nome, nome) == 0) {
+            for (int j = i; j < raiz.num_arquivos - 1; j++) {
+                raiz.arquivos[j] = raiz.arquivos[j+1];
+            }
+            raiz.num_arquivos--;
+            printf("Arquivo '%s' deletado.\n", nome);
+#ifdef _WIN32
+            Sleep(500);
+#else
+            usleep(500000);
+#endif
+            return;
+        }
+    }
+    printf("Arquivo '%s' não encontrado.\n", nome);
+#ifdef _WIN32
+    Sleep(500);
+#else
+    usleep(500000);
+#endif
+}
+
+typedef struct {
+    int valor;
+} Semaforo;
+
+void inicializar_semaforo(Semaforo* s, int valor_inicial) {
+    s->valor = valor_inicial;
+}
+
+void p_semaforo(Semaforo* s) {
+    while (s->valor <= 0) {
+    }
+    s->valor--;
+}
+
+void v_semaforo(Semaforo* s) {
+    s->valor++;
+}
+
+int recurso_compartilhado = 0;
+Semaforo mutex;
+
+void acessar_secao_critica(int id_processo) {
+    printf("Processo %d tentando acessar seção crítica...\n", id_processo);
+#ifdef _WIN32
+    Sleep(500);
+#else
+    usleep(500000);
+#endif
+    p_semaforo(&mutex);
+    printf("Processo %d ACESSOU seção crítica. Recurso: %d\n", id_processo, recurso_compartilhado);
+    recurso_compartilhado++;
+#ifdef _WIN32
+    Sleep(1000);
+#else
+    sleep(1);
+#endif
+    printf("Processo %d SAINDO da seção crítica. Recurso: %d\n", id_processo, recurso_compartilhado);
+    v_semaforo(&mutex);
+#ifdef _WIN32
+    Sleep(500);
+#else
+    usleep(500000);
+#endif
+}
+
+int main() {
+    inicializar_memoria();
+    inicializar_sistema_arquivos();
+    inicializar_semaforo(&mutex, 1);
+
+    printf("\n--- SIMULAÇÃO DO SISTEMA OPERACIONAL ---\n");
+#ifdef _WIN32
+    Sleep(1000);
+#else
+    sleep(1);
+#endif
+
+    Processo* p1 = criar_processo(1, "Tarefa A", 5, 2, 50);
+    Processo* p2 = criar_processo(2, "Tarefa B", 3, 1, 30);
+    Processo* p3 = criar_processo(3, "Tarefa C", 7, 3, 80);
+    Processo* p4 = criar_processo(4, "Tarefa D", 2, 2, 20);
+
+    alocar_memoria_FirstFit(p1);
+    alocar_memoria_FirstFit(p2);
+    alocar_memoria_FirstFit(p3);
+    alocar_memoria_FirstFit(p4);
+
+    adicionar_a_fila_prontos(p1);
+    adicionar_a_fila_prontos(p2);
+    adicionar_a_fila_prontos(p3);
+    adicionar_a_fila_prontos(p4);
+
+    printf("\n--- ESCALONAMENTO DE PROCESSOS (FIFO) ---\n");
+#ifdef _WIN32
+    Sleep(1000);
+#else
+    sleep(1);
+#endif
+
+    while (num_processos_prontos > 0) {
+        Processo* processo_atual = escalonar_fifo();
+        if (processo_atual != NULL) {
+            simular_execucao(processo_atual);
+        }
+    }
+
+    printf("\n--- GERÊNCIA DE DISPOSITIVOS DE E/S ---\n");
+#ifdef _WIN32
+    Sleep(1000);
+#else
+    sleep(1);
+#endif
+    Processo* p_io = criar_processo(5, "Tarefa E/S", 4, 1, 40);
+    alocar_memoria_FirstFit(p_io);
+    solicitar_es(p_io, IMPRESSORA);
+    simular_interrupcao_es(IMPRESSORA);
+
+    if (num_processos_prontos > 0) {
+        Processo* p_io_resumed = escalonar_fifo();
+        if (p_io_resumed != NULL) {
+            simular_execucao(p_io_resumed);
+        }
+    }
+    liberar_memoria(p_io);
+
+
+    printf("\n--- SISTEMA DE ARQUIVOS SIMPLES ---\n");
+#ifdef _WIN32
+    Sleep(1000);
+#else
+    sleep(1);
+#endif
+    criar_arquivo("meu_documento.txt", true, true);
+    escrever_arquivo("meu_documento.txt", "Este é o conteúdo do meu documento.");
+    ler_arquivo("meu_documento.txt");
+    criar_arquivo("somente_leitura.txt", true, false);
+    escrever_arquivo("somente_leitura.txt", "Tentar escrever aqui.");
+    ler_arquivo("somente_leitura.txt");
+    deletar_arquivo("meu_documento.txt");
+    ler_arquivo("meu_documento.txt");
+
+
+    printf("\n--- PROGRAMAÇÃO CONCORRENTE ---\n");
+#ifdef _WIN32
+    Sleep(1000);
+#else
+    sleep(1);
+#endif
+    acessar_secao_critica(101);
+    acessar_secao_critica(102);
+    acessar_secao_critica(103);
+
+
+    printf("\n--- FIM DA SIMULAÇÃO ---\n");
+#ifdef _WIN32
+    Sleep(2000);
+#else
+    sleep(2);
+#endif
+
+    Processo* processos_criados[] = {p1, p2, p3, p4, p_io};
+    for (int i = 0; i < sizeof(processos_criados) / sizeof(Processo*); i++) {
+        if (processos_criados[i]->estado == FINALIZADO) {
+            free(processos_criados[i]);
+        }
+    }
+
+    return 0;
+}
